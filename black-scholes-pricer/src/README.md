@@ -9,42 +9,44 @@ It is fully modular, using separate `.h` and `.cpp` files, and provides a simple
 
 - Pricing of **European Call and Put options**
 - Continuous **dividend yield** `q`
-- Computation of all Greeks:
+- Full set of Greeks:
   - Delta (call & put)
   - Gamma  
   - Vega  
   - Theta (call & put)  
   - Rho (call & put)
-- Input parameters directly from the terminal
 - Clean modular C++ structure
+- Terminal-based interface
 
 ---
 
 ## 🧮 Mathematical Formulas
 
-For a spot price \(S\), strike \(K\), maturity \(T\), volatility \(\sigma\), risk-free rate \(r\), and dividend yield \(q\):
+For spot price $S$, strike $K$, maturity $T$, volatility $\sigma$, risk-free rate $r$, and dividend yield $q$:
 
 ### **d₁ and d₂**
 
 $$
-d_1 = \frac{\ln(S/K) + (r - q + \tfrac12\sigma^2)T}{\sigma\sqrt{T}}, 
-\qquad
-d_2 = d_1 - \sigma\sqrt{T}.
+d_1 = \frac{\ln(S/K) + (r - q + \tfrac12\sigma^2)\,T}{\sigma\sqrt{T}}
+$$
+
+$$
+d_2 = d_1 - \sigma\sqrt{T}
 $$
 
 ### **Call price**
 
 $$
-C = S e^{-qT}\,\Phi(d_1) - K e^{-rT}\,\Phi(d_2)
+C = S e^{-qT}\Phi(d_1) - K e^{-rT}\Phi(d_2)
 $$
 
 ### **Put price**
 
 $$
-P = K e^{-rT}\,\Phi(-d_2) - S e^{-qT}\,\Phi(-d_1)
+P = K e^{-rT}\Phi(-d_2) - S e^{-qT}\Phi(-d_1)
 $$
 
-where \(\Phi\) is the standard normal CDF and \(\phi\) its PDF.
+where $\Phi$ is the standard normal CDF and $\varphi$ its PDF.
 
 ---
 
@@ -53,47 +55,51 @@ where \(\Phi\) is the standard normal CDF and \(\phi\) its PDF.
 ### **Delta**
 
 $$
-\Delta_{\text{call}} = e^{-qT}\Phi(d_1),
-\qquad
-\Delta_{\text{put}}  = e^{-qT}(\Phi(d_1)-1)
+\Delta_{\text{call}} = e^{-qT}\Phi(d_1)
+$$
+
+$$
+\Delta_{\text{put}} = e^{-qT}(\Phi(d_1)-1)
 $$
 
 ### **Gamma**
 
 $$
-\Gamma = \frac{e^{-qT}\phi(d_1)}{S\sigma\sqrt{T}}
+\Gamma = \frac{e^{-qT}\varphi(d_1)}{S\sigma\sqrt{T}}
 $$
 
 ### **Vega**
 
 $$
-V = S e^{-qT}\phi(d_1)\sqrt{T}
+V = S e^{-qT}\varphi(d_1)\sqrt{T}
 $$
 
 ### **Theta (Call)**
 
 $$
 \Theta_{\text{call}} =
-- \frac{S e^{-qT}\phi(d_1)\sigma}{2\sqrt{T}}
-+ q S e^{-qT}\Phi(d_1)
-- r K e^{-rT}\Phi(d_2)
+- \frac{S e^{-qT}\varphi(d_1)\sigma}{2\sqrt{T}}
++ qS e^{-qT}\Phi(d_1)
+- rK e^{-rT}\Phi(d_2)
 $$
 
 ### **Theta (Put)**
 
 $$
 \Theta_{\text{put}} =
-- \frac{S e^{-qT}\phi(d_1)\sigma}{2\sqrt{T}}
-- q S e^{-qT}\Phi(-d_1)
-+ r K e^{-rT}\Phi(-d_2)
+- \frac{S e^{-qT}\varphi(d_1)\sigma}{2\sqrt{T}}
+- qS e^{-qT}\Phi(-d_1)
++ rK e^{-rT}\Phi(-d_2)
 $$
 
 ### **Rho**
 
 $$
-\rho_{\text{call}} = K T e^{-rT}\Phi(d_2),
-\qquad
-\rho_{\text{put}}  = -K T e^{-rT}\Phi(-d_2)
+\rho_{\text{call}} = K T e^{-rT}\Phi(d_2)
+$$
+
+$$
+\rho_{\text{put}} = -K T e^{-rT}\Phi(-d_2)
 $$
 
 ---
@@ -101,6 +107,8 @@ $$
 ## 💡 Example
 
 ### **Example Input**
+
+
 
 
 S      = 100

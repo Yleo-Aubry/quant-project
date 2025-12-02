@@ -78,7 +78,7 @@ $$
 
 $$
 \Theta_{\text{call}} =
-- \frac{S e^{-qT}\varphi(d_1)\sigma}{2\sqrt{T}}
+-\frac{S e^{-qT}\varphi(d_1)\sigma}{2\sqrt{T}}
 + qS e^{-qT}\Phi(d_1)
 - rK e^{-rT}\Phi(d_2)
 $$
@@ -87,7 +87,7 @@ $$
 
 $$
 \Theta_{\text{put}} =
-- \frac{S e^{-qT}\varphi(d_1)\sigma}{2\sqrt{T}}
+-\frac{S e^{-qT}\varphi(d_1)\sigma}{2\sqrt{T}}
 - qS e^{-qT}\Phi(-d_1)
 + rK e^{-rT}\Phi(-d_2)
 $$

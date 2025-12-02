@@ -24,72 +24,83 @@ It is fully modular, using separate `.h` and `.cpp` files, and provides a simple
 
 For a spot price \(S\), strike \(K\), maturity \(T\), volatility \(\sigma\), risk-free rate \(r\), and dividend yield \(q\):
 
-### d₁ and d₂
-\[
-d_1 = \frac{\ln(S/K) + (r - q + \tfrac{1}{2}\sigma^2)T}{\sigma\sqrt{T}},
+### **d₁ and d₂**
+
+$$
+d_1 = \frac{\ln(S/K) + (r - q + \tfrac12\sigma^2)T}{\sigma\sqrt{T}}, 
 \qquad
 d_2 = d_1 - \sigma\sqrt{T}.
-\]
+$$
 
-### Call price
-\[
-C = S e^{-qT} \Phi(d_1) - K e^{-rT} \Phi(d_2)
-\]
+### **Call price**
 
-### Put price
-\[
-P = K e^{-rT} \Phi(-d_2) - S e^{-qT} \Phi(-d_1)
-\]
+$$
+C = S e^{-qT}\,\Phi(d_1) - K e^{-rT}\,\Phi(d_2)
+$$
 
-where \(\Phi\) is the CDF of the standard normal distribution and \(\phi\) its PDF.
+### **Put price**
+
+$$
+P = K e^{-rT}\,\Phi(-d_2) - S e^{-qT}\,\Phi(-d_1)
+$$
+
+where \(\Phi\) is the standard normal CDF and \(\phi\) its PDF.
 
 ---
 
 ## 🧮 Greeks
 
-### Delta
-\[
+### **Delta**
+
+$$
 \Delta_{\text{call}} = e^{-qT}\Phi(d_1),
 \qquad
 \Delta_{\text{put}}  = e^{-qT}(\Phi(d_1)-1)
-\]
+$$
 
-### Gamma
-\[
+### **Gamma**
+
+$$
 \Gamma = \frac{e^{-qT}\phi(d_1)}{S\sigma\sqrt{T}}
-\]
+$$
 
-### Vega
-\[
+### **Vega**
+
+$$
 V = S e^{-qT}\phi(d_1)\sqrt{T}
-\]
+$$
 
-### Theta
-\[
+### **Theta (Call)**
+
+$$
 \Theta_{\text{call}} =
 - \frac{S e^{-qT}\phi(d_1)\sigma}{2\sqrt{T}}
 + q S e^{-qT}\Phi(d_1)
 - r K e^{-rT}\Phi(d_2)
-\]
+$$
 
-\[
+### **Theta (Put)**
+
+$$
 \Theta_{\text{put}} =
 - \frac{S e^{-qT}\phi(d_1)\sigma}{2\sqrt{T}}
 - q S e^{-qT}\Phi(-d_1)
 + r K e^{-rT}\Phi(-d_2)
-\]
+$$
 
-### Rho
-\[
+### **Rho**
+
+$$
 \rho_{\text{call}} = K T e^{-rT}\Phi(d_2),
 \qquad
 \rho_{\text{put}}  = -K T e^{-rT}\Phi(-d_2)
-\]
+$$
 
 ---
+
 ## 💡 Example
 
-### Example Input
+### **Example Input**
 
 
 S      = 100
@@ -100,7 +111,8 @@ sigma  = 0.20
 q      = 0
 
 
-### Typical Output
+
+### **Typical Output**
 
 Call price : 10.4506
 Put  price : 5.5735

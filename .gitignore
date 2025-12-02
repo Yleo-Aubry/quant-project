@@ -1,0 +1,29 @@
+# Executables
+*.exe
+*.out
+*.o
+*.obj
+
+# Build folders
+/build/
+bin/
+dist/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Logs
+*.log
+
+# Temporary files
+*~
+*.tmp
+*.swp
+
+# Mac OS
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc

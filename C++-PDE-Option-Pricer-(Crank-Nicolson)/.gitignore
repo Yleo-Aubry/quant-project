@@ -1,0 +1,27 @@
+# Build directories
+build/
+bin/
+lib/
+
+# Executables
+*.exe
+*.out
+*.app
+
+# CMake temporary files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# IDE settings (VS Code, etc.)
+.vscode/
+.idea/
+*.swp
+
+# Generated Data
+*.csv
+
+# OS generated files
+.DS_Store
+Thumbs.db

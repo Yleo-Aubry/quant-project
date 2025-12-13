@@ -10,7 +10,7 @@ Each project is contained in its own folder, with its own source code, documenta
 ## 📂 Available Projects
 
 ### 1. PDE Option Pricer (Crank-Nicolson) 
-Location: `pde-solver/` (ou le nom exact de ton dossier)
+Location: `C++-PDE-Option-Pricer-(Crank-Nicolson)/` 
 
 An advanced numerical engine solving the **Black-Scholes Partial Differential Equation (PDE)**. Unlike the analytic formula, this solver uses Finite Difference Methods (FDM) to price options.
 

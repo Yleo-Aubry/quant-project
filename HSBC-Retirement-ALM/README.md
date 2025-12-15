@@ -5,7 +5,7 @@
 > **Academic Project** | **ENSAE Paris**
 > *Supervised by HSBC*
 
-** Contributors**
+**Contributors**
 * Nada MOUSTEAU
 * Maxime HEBERT
 * Maxime HIRSCH
@@ -29,7 +29,7 @@ Demographic transitions in developed economies, particularly in France, are plac
 
 This project explores how to optimize these supplementary savings to maximize terminal wealth while managing the risks of inflation and market volatility over a 30-40 year horizon.
 
-## 📂 Repository Content
+##  Repository Content
 
 This repository contains the strategies tested and their results.
 

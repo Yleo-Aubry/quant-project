@@ -1,534 +1,365 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Simulation d'investissement - STRATÉGIE FIXED MIX (Allocation Constante)
-- Backtesting sur données historiques 
-- Allocation FIXE déterminée automatiquement par le PROFIL choisi
-- Rééquilibrage MENSUEL
-- MODELE D'APPORT : QUADRATIQUE (Réaliste selon Bruder et al. 2025)
-"""
+
+
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
 import os
-import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
+from scipy import optimize
+import matplotlib.ticker as mtick
 
-''' ========== ACTIFS DISPONIBLES ========== '''
+# Style graphique professionnel
+plt.style.use('seaborn-v0_8-whitegrid')
 
-BONDS_SAFE = {
-    "US Government Bond USD Unhedged": "Bond Gov",
-    "US Inflation Linked Bond - USD Unhedged": "Bond Inflation"
-}
+''' =======================================================================
+    1. CONFIGURATION
+    ======================================================================= '''
 
-BONDS_RISKY = {
-    "US High Yield Bond BB-B - USD Unhedged": "High Yield",
-    "USD Corporate Bond - USD Unhedged": "Corp Bond"
-}
+# --- Paramètres Utilisateur ---
+PROFIL_CHOISI = "EQUILIBRE"
+NB_ANNEES_ACCUMULATION = 40
+DATE_DEBUT_T0 = "2001-12-31" 
+SALAIRE_INITIAL = 2000   
+CAPITAL_INITIAL = 5000   
 
-EQUITIES = {
-    "Asia Pacific ex Japan Equity USD Hedged": "Asia Pacific",  
-    "Global Equity USD Hedged": "Global Equity",
-    "Japan Equity - USD Unhedged": "Japan Equity",
-    "US Equity USD Unhedged": "US Equity"
-}
+# --- Paramètres Retraite ---
+DUREE_RETRAITE = 20     
+TAUX_LIVRET_A = 0.017   
 
-''' ========== PROFILS INVESTISSEURS (ACTIFS + ALLOCATION FIXE) ========== '''
+# --- Paramètres Simulation ---
+NB_SIMULATIONS = 500
+NB_PAS_PAR_AN = 12
+NB_PERIODES_TOTAL = NB_ANNEES_ACCUMULATION * NB_PAS_PAR_AN
 
+# --- Paramètres Éco ---
+VITESSE_PROGRESSION = 0.10   
+GAMMA_ELASTICITE = 1.5       
+SEUIL_MATURITE = 0.935       
+TAUX_APPORT_BASE = 0.10      
+SALAIRE_MAX_CIBLE = SALAIRE_INITIAL * 2.5 
+INFLATION_ANNUELLE = 0.02  
+
+# --- Paramètres Crise ---
+SIMULER_KRACH = True
+DATE_CRISE = "2030-03-31"   
+PARAMS_CRISE = {'drop_eq': 0.35, 'drop_bd': 0.05, 'duree_mois': 18, 'facteur_vol': 2.5}
+
+# --- Profils ---
 PROFILS = {
-    "PRUDENT": {
-        "description": "Sécuritaire (20% Actions / 80% Obligations)",
-        "equity": "Global Equity USD Hedged", 
-        "bond": "US Government Bond USD Unhedged", 
-        "fixed_allocation": 0.20  # 20% Actions
-    },
-    "MODERE": {
-        "description": "Défensif (40% Actions / 60% Obligations)",
-        "equity": "Global Equity USD Hedged",
-        "bond": "US Inflation Linked Bond - USD Unhedged", 
-        "fixed_allocation": 0.40  # 40% Actions
-    },
-    "EQUILIBRE": {
-        "description": "Le classique 60/40 (60% Actions / 40% Obligations)",
-        "equity": "Global Equity USD Hedged", 
-        "bond": "USD Corporate Bond - USD Unhedged",
-        "fixed_allocation": 0.60  # 60% Actions
-    },
-    "DYNAMIQUE": {
-        "description": "Offensif (80% Actions / 20% Obligations)",
-        "equity": "US Equity USD Unhedged",
-        "bond": "USD Corporate Bond - USD Unhedged", 
-        "fixed_allocation": 0.80  # 80% Actions
-    },
-    "AGRESSIF": {
-        "description": "Maximisation (95% Actions / 5% Obligations)",
-        "equity": "Japan Equity - USD Unhedged", 
-        "bond": "US High Yield Bond BB-B - USD Unhedged",
-        "fixed_allocation": 0.95  # 95% Actions
-    }
+    "PRUDENT":   {"equity": "Global Equity USD Hedged", "bond": "US Government Bond USD Unhedged", "fixed_allocation": 0.20},
+    "MODERE":    {"equity": "Global Equity USD Hedged", "bond": "US Inflation Linked Bond - USD Unhedged", "fixed_allocation": 0.40},
+    "EQUILIBRE": {"equity": "Global Equity USD Hedged", "bond": "USD Corporate Bond - USD Unhedged", "fixed_allocation": 0.60},
+    "DYNAMIQUE": {"equity": "US Equity USD Unhedged",   "bond": "USD Corporate Bond - USD Unhedged", "fixed_allocation": 0.80},
+    "AGRESSIF":  {"equity": "Japan Equity - USD Unhedged","bond": "US High Yield Bond BB-B - USD Unhedged", "fixed_allocation": 0.95}
 }
 
-''' ========== PARAMÈTRES DE SIMULATION ========== '''
+''' =======================================================================
+    2. FONCTIONS CALCUL
+    ======================================================================= '''
 
+def get_params(asset_name, df_bs):
+    row = df_bs[df_bs['Asset Name'] == asset_name]
+    if row.empty: raise ValueError(f"Actif {asset_name} introuvable.")
+    return row['Expected Return'].values[0], row['Volatility'].values[0], (row['Correlation'].values[0] if 'Correlation' in row.columns else 0.3)
 
-PROFIL_CHOISI = ""  # PRUDENT, MODERE, EQUILIBRE, DYNAMIQUE, AGRESSIF
-# ----------------------------------
+def estimer_salaire_saturation(t_annees, S_init, S_max):
+    return S_init + (S_max - S_init) * (1 - np.exp(-VITESSE_PROGRESSION * t_annees))
 
-# Paramètres financiers
-nb_annees = 
-t0 = "2001-12-31"  # Date de départ
-age_depart = 
-capital_initial = 
-salaire_initial = 
-taux_apport = 
-taux_inflation = 
+def precalculer_parametres_apport(S_init, S_max, duree_totale):
+    ratio = S_max / S_init
+    facteur = ratio ** GAMMA_ELASTICITE
+    app_init, app_max = S_init * TAUX_APPORT_BASE, S_init * TAUX_APPORT_BASE * facteur
+    s_cible = S_init + (S_max - S_init) * SEUIL_MATURITE
+    if s_cible >= S_max: t_pic = duree_totale
+    else: t_pic = -np.log(1 - min((s_cible - S_init) / (S_max - S_init), 0.9999)) / VITESSE_PROGRESSION
+    return app_init, app_max, min(max(0, t_pic), duree_totale)
 
-# Monte Carlo
-nb_simulations = 500
-nb_pas_par_an = 12
-nb_periodes_total = nb_annees * nb_pas_par_an
+def calculer_apport_mensuel(t_annees, app_init, app_max, t_pic):
+    if t_pic <= 0: return app_init 
+    a = (app_init - app_max) / (t_pic**2)
+    return max(a * (t_annees - t_pic)**2 + app_max, 0)
 
-# Sélection automatique des paramètres selon le profil
-profil = PROFILS[PROFIL_CHOISI]
-Equity = profil["equity"]
-Bond = profil["bond"]
-FIXED_ALLOCATION_EQUITY = profil["fixed_allocation"]
+def calculer_tri_annualise(capital_init, liste_apports, val_finale, freq=12):
+    flux = [-float(capital_init)]
+    flux.extend([-float(m) for m in liste_apports]) 
+    flux.append(float(val_finale))
+    def npv(r):
+        if r <= -1.0: return 1e10 
+        valeurs = np.array(flux)
+        puissances = np.arange(len(flux))
+        return np.sum(valeurs / ((1 + r) ** puissances))
+    try:
+        tri_periodique = optimize.brentq(npv, -0.05, 0.10)
+        return ((1 + tri_periodique) ** freq - 1) * 100
+    except:
+        return 0.0
 
-''' ========== CHARGEMENT DES DONNÉES ========== '''
+def generer_rendements_simules(mu_e, sigma_e, mu_b, sigma_b, corr, dates, date_pivot, nb_sims):
+    dt = 1.0/12.0
+    nb_total_mois = len(dates)
+    dates_pd = pd.to_datetime(dates)
+    pivot_ts = pd.Timestamp(date_pivot)
+    
+    if pivot_ts < dates_pd[0]: idx_split = 0
+    elif pivot_ts > dates_pd[-1]: idx_split = nb_total_mois
+    else: idx_split = np.searchsorted(dates_pd, pivot_ts)
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-file_path = os.path.join(script_dir, "HistoricalAssetReturn.csv")
+    s_e, s_b = sigma_e * np.sqrt(dt), sigma_b * np.sqrt(dt)
+    cov = np.array([[s_e**2, corr*s_e*s_b], [corr*s_e*s_b, s_b**2]])
 
-df_historical = pd.read_csv(file_path, header=None)
-df_historical.columns = df_historical.iloc[1]  
-df_historical = df_historical.rename(columns={"Asset Class - Name": "Date"})
-df_historical = df_historical.drop(index=0) 
-df_historical = df_historical.drop(index=1)
-df_historical = df_historical.drop(index=2)  
-df_historical["Date"] = pd.to_datetime(df_historical["Date"], errors="coerce")
-
-for col in df_historical.columns:
-    if col != "Date":
-        df_historical[col] = df_historical[col].astype(float)
-
-# Vérification actifs
-if Equity not in df_historical.columns:
-    raise ValueError(f"Actif {Equity} non trouvé dans HistoricalAssetReturn.csv")
-if Bond not in df_historical.columns:
-    raise ValueError(f"Actif {Bond} non trouvé dans HistoricalAssetReturn.csv")
-
-''' ========== ANALYSE DE VOLATILITÉ HISTORIQUE ========== '''
-
-print("=" * 80)
-print("📊 ANALYSE DES ACTIFS DISPONIBLES")
-print("=" * 80)
-
-# Calcul volatilités historiques (annualisées)
-print("\n🔵 ACTIONS (Equity) - Volatilité historique annualisée:")
-for equity_name, short_name in EQUITIES.items():
-    if equity_name in df_historical.columns:
-        returns = df_historical[equity_name].dropna()
-        vol_annuelle = returns.std() * np.sqrt(12) * 100
-        rendement_moyen = returns.mean() * 12 * 100
-        print(f"  • {short_name:20s}: Vol={vol_annuelle:5.2f}%  | Rdt moy={rendement_moyen:6.2f}%")
-
-print("\n🟢 OBLIGATIONS SÛRES (Bonds Safe):")
-for bond_name, short_name in BONDS_SAFE.items():
-    if bond_name in df_historical.columns:
-        returns = df_historical[bond_name].dropna()
-        vol_annuelle = returns.std() * np.sqrt(12) * 100
-        rendement_moyen = returns.mean() * 12 * 100
-        print(f"  • {short_name:20s}: Vol={vol_annuelle:5.2f}%  | Rdt moy={rendement_moyen:6.2f}%")
-
-print("\n🟡 OBLIGATIONS RISQUÉES (Bonds Risky):")
-for bond_name, short_name in BONDS_RISKY.items():
-    if bond_name in df_historical.columns:
-        returns = df_historical[bond_name].dropna()
-        vol_annuelle = returns.std() * np.sqrt(12) * 100
-        rendement_moyen = returns.mean() * 12 * 100
-        print(f"  • {short_name:20s}: Vol={vol_annuelle:5.2f}%  | Rdt moy={rendement_moyen:6.2f}%")
-
-print("\n" + "=" * 80)
-print(f"🎯 STRATÉGIE FIXED MIX ({FIXED_ALLOCATION_EQUITY*100:.0f}/{100-FIXED_ALLOCATION_EQUITY*100:.0f})")
-print("=" * 80)
-print(f"Profil sélectionné: {PROFIL_CHOISI}")
-print(f"Description: {profil['description']}")
-print(f"Equity: {EQUITIES.get(Equity, Equity)}")
-print(f"Bond: {BONDS_SAFE.get(Bond, BONDS_RISKY.get(Bond, Bond))}")
-print(f"Allocation CONSTANTE: {FIXED_ALLOCATION_EQUITY*100:.0f}% equity")
-print("Rééquilibrage: MENSUEL")
-print("Modèle d'apport: QUADRATIQUE (Réaliste)")
-
-''' ========== PARAMÈTRES POUR FORECASTS ========== '''
-
-excel_path = os.path.join(script_dir, "AssumptionForSimulation.xlsx")
-df_BS = pd.read_excel(excel_path, sheet_name=0)
-
-df_BS['Asset Name'] = df_BS['Asset Name'].replace({
-    'Liquidity USD': 'Liquidity USD',
-    'US Government Bond': 'US Government Bond USD Unhedged',
-    'US Inflation Linked Bond': 'US Inflation Linked Bond - USD Unhedged',
-    'US High Yield Bond BB-B': 'US High Yield Bond BB-B - USD Unhedged',
-    'USD Corporate Bond': 'USD Corporate Bond - USD Unhedged',
-    'Asia Pacific ex Japan Equity': 'Asia Pacific ex Japan Equity USD Hedged',
-    'Global Equity': 'Global Equity USD Hedged',
-    'Japan Equity': 'Japan Equity - USD Unhedged',
-    'US Equity': 'US Equity USD Unhedged',
-    'US Property': 'US Property'
-})
-
-def get_params(asset_name):
-    row = df_BS[df_BS['Asset Name'] == asset_name]
-    if row.empty:
-        raise ValueError(f"Actif {asset_name} non trouvé")
-    mu = row['Expected Return'].values[0]
-    sigma = row['Volatility'].values[0]
-    corr = row['Correlation'].values[0] if 'Correlation' in row.columns else 0.3
-    return (mu, sigma, corr)
-
-params_equity = get_params(Equity)
-params_bond = get_params(Bond)
-
-mu_e, sigma_e, _ = params_equity
-mu_b, sigma_b, corr_eb = params_bond
-
-print(f"\nParamètres de forecast (Black & Scholes):")
-print(f"  • Equity: μ={mu_e*100:.2f}%, σ={sigma_e*100:.2f}%")
-print(f"  • Bond: μ={mu_b*100:.2f}%, σ={sigma_b*100:.2f}%")
-print(f"  • Corrélation: {corr_eb:.2f}")
-print("=" * 80)
-
-''' ========== ALLOCATION FIXED MIX ========== '''
-
-def calculer_allocation(age):
-    """
-    Allocation FIXE dictée par le profil
-    """
-    return FIXED_ALLOCATION_EQUITY, 1 - FIXED_ALLOCATION_EQUITY
-
-''' ========== MODÈLE D'APPORT QUADRATIQUE  ========== '''
-
-def calculer_apport_quadratique(t_annees, apport_init, duree_totale):
-    """
-    Simule une courbe d'épargne en cloche asymétrique.
-    """
-    # 1. Définition du Pic
-    ratio_pic = 0.55  
-    t_pic = duree_totale * ratio_pic
+    # Partie Historique (Commune)
+    if idx_split > 0:
+        np.random.seed(42) 
+        chocs_histo_unique = np.random.multivariate_normal([0, 0], cov, size=(idx_split))
+        r_eq_h = (mu_e*dt - 0.5*s_e**2) + chocs_histo_unique[:, 0]
+        r_bd_h = (mu_b*dt - 0.5*s_b**2) + chocs_histo_unique[:, 1]
         
-    # 2. Hauteur du Pic
-    facteur_croissance_max = 1.2
-    apport_max = apport_init * facteur_croissance_max
-        
-    # 3. Calcul de la parabole
-    if t_pic > 0:
-        a = (apport_init - apport_max) / (t_pic**2)
+        # On duplique le MÊME passé pour tout le monde
+        r_eq_past = np.tile(r_eq_h.reshape(-1, 1), (1, nb_sims))
+        r_bd_past = np.tile(r_bd_h.reshape(-1, 1), (1, nb_sims))
     else:
-        return apport_init
+        r_eq_past = np.empty((0, nb_sims))
+        r_bd_past = np.empty((0, nb_sims))
 
-    apport = a * (t_annees - t_pic)**2 + apport_max
+    # Partie Futur (Divergente)
+    nb_mois_futur = nb_total_mois - idx_split
+    if nb_mois_futur > 0:
+        np.random.seed(None) 
+        chocs_futur = np.random.multivariate_normal([0, 0], cov, size=(nb_mois_futur, nb_sims))
+        r_eq_fut = (mu_e*dt - 0.5*s_e**2) + chocs_futur[:, :, 0]
+        r_bd_fut = (mu_b*dt - 0.5*s_b**2) + chocs_futur[:, :, 1]
+    else:
+        r_eq_fut = np.empty((0, nb_sims))
+        r_bd_fut = np.empty((0, nb_sims))
+
+    return np.vstack([r_eq_past, r_eq_fut]), np.vstack([r_bd_past, r_bd_fut])
+
+def injecter_crise_complexe(r_eq, r_bd, dates_list, date_depart, params):
+    r_eq_m, r_bd_m = r_eq.copy(), r_bd.copy()
+    dates_pd = pd.to_datetime(dates_list)
+    idx = np.argmin(np.abs(dates_pd - pd.Timestamp(date_depart)))
+    if abs((dates_pd[idx] - pd.Timestamp(date_depart)).days) > 40: return r_eq, r_bd 
+    
+    r_eq_m[idx, :] = np.log(1.0 - params.get('drop_eq', 0.3))
+    r_bd_m[idx, :] = np.log(1.0 - params.get('drop_bd', 0.0))
+    end = min(idx + params.get('duree_mois', 12), r_eq.shape[0])
+    facteur = params.get('facteur_vol', 2.0)
+    r_eq_m[idx+1:end, :] *= facteur
+    r_bd_m[idx+1:end, :] *= facteur
+    return r_eq_m, r_bd_m
+
+def simuler_accumulation_complete(capital_init, r_eq, r_bd, alloc, dates):
+    nb_steps, nb_sims = r_eq.shape
+    mat_cap = np.zeros((nb_steps + 1, nb_sims))
+    mat_cap[0, :] = capital_init
+    courbe_investi = np.zeros(nb_steps + 1)
+    courbe_investi[0] = capital_init
+    hist_salaire = np.zeros(nb_steps)
+    hist_apport = np.zeros(nb_steps)
+    app_init, app_max, t_pic = precalculer_parametres_apport(SALAIRE_INITIAL, SALAIRE_MAX_CIBLE, NB_ANNEES_ACCUMULATION)
+    
+    for t in range(nb_steps):
+        annee_f = t/12.0
+        salaire_mensuel = estimer_salaire_saturation(annee_f, SALAIRE_INITIAL, SALAIRE_MAX_CIBLE)
+        apport_mensuel = calculer_apport_mensuel(annee_f, app_init, app_max, t_pic)
+        hist_salaire[t] = salaire_mensuel
+        hist_apport[t] = apport_mensuel
         
-    # Sécurité
-    return max(apport, 0)
-
-''' ========== EXTRACTION RENDEMENTS HISTORIQUES ========== '''
-
-def extraire_rendements_historiques(date_debut, nb_mois):
-    start_index = df_historical.index[df_historical["Date"] == date_debut].tolist()
-    if not start_index:
-        raise ValueError(f"La date {date_debut} n'existe pas dans les données historiques")
-    start_index = start_index[0]
-    
-    end_index = min(start_index + nb_mois, len(df_historical))
-    df_periode = df_historical.iloc[start_index:end_index].reset_index(drop=True)
-    
-    rendements_eq = df_periode[Equity].values
-    rendements_bd = df_periode[Bond].values
-    dates = df_periode["Date"].values
-    
-    nb_mois_disponibles = len(rendements_eq)
-    
-    return rendements_eq, rendements_bd, dates, nb_mois_disponibles
-
-''' ========== SIMULATION BLACK & SCHOLES ========== '''
-
-def generer_rendements_correles(mu_e, sigma_e, mu_b, sigma_b, corr, nb_periodes, nb_sims):
-    r_e_mensuel = mu_e / 12
-    r_b_mensuel = mu_b / 12
-    sigma_e_mensuel = sigma_e / np.sqrt(12)
-    sigma_b_mensuel = sigma_b / np.sqrt(12)
-    
-    cov_matrix = np.array([
-        [sigma_e_mensuel**2, corr * sigma_e_mensuel * sigma_b_mensuel],
-        [corr * sigma_e_mensuel * sigma_b_mensuel, sigma_b_mensuel**2]
-    ])
-    
-    chocs = np.random.multivariate_normal([0, 0], cov_matrix, size=(nb_periodes, nb_sims))
-    
-    rendements_equity = r_e_mensuel - 0.5 * sigma_e_mensuel**2 + chocs[:, :, 0]
-    rendements_bonds = r_b_mensuel - 0.5 * sigma_b_mensuel**2 + chocs[:, :, 1]
-    
-    return rendements_equity, rendements_bonds
-
-''' ========== MODE HYBRIDE ========== '''
-
-rendements_eq_hist, rendements_bd_hist, dates_hist, nb_mois_hist = extraire_rendements_historiques(t0, nb_periodes_total)
-
-if nb_mois_hist < nb_periodes_total:
-    nb_mois_manquants = nb_periodes_total - nb_mois_hist
-    print(f"\n📊 Mode HYBRIDE: {nb_mois_hist} mois historiques + {nb_mois_manquants} mois simulés (B&S)")
-    
-    rendements_eq_forecast, rendements_bd_forecast = generer_rendements_correles(
-        mu_e, sigma_e, mu_b, sigma_b, corr_eb, nb_mois_manquants, nb_simulations
-    )
-    
-    rendements_eq_scenarios = np.vstack([
-        np.tile(rendements_eq_hist, (nb_simulations, 1)).T,
-        rendements_eq_forecast
-    ])
-    rendements_bd_scenarios = np.vstack([
-        np.tile(rendements_bd_hist, (nb_simulations, 1)).T,
-        rendements_bd_forecast
-    ])
-else:
-    print(f"\n📊 Période entièrement couverte par les données historiques ({nb_mois_hist} mois)")
-    rendements_eq_scenarios = rendements_eq_hist.reshape(-1, 1)
-    rendements_bd_scenarios = rendements_bd_hist.reshape(-1, 1)
-    nb_simulations = 1
-
-''' ========== BOUCLE DE SIMULATION (FIXED MIX REBALANCED MONTHLY) ========== '''
-
-resultats_finaux = []
-historiques_capital = []
-# On stocke l'historique des apports pour le graphique
-historique_apports_moyens = np.zeros(nb_periodes_total) 
-
-for sim in range(nb_simulations):
-    eq_shares = 0.0
-    bd_shares = 0.0
-    eq_price = 100.0
-    bd_price = 100.0
-    
-    # Allocation initiale
-    pct_eq, pct_bd = calculer_allocation(age_depart)
-    
-    eq_shares = (capital_initial * pct_eq) / eq_price
-    bd_shares = (capital_initial * pct_bd) / bd_price
-    
-    historique_capital = [capital_initial]
-    total_investi_sim = capital_initial
-    
-    for k in range(nb_periodes_total):
-        mois = k + 1
-        t_annees_ecoulees = k / 12.0
-        annee_courante = k // 12
-        age_actuel = age_depart + annee_courante
+        rendement = alloc * r_eq[t, :] + (1 - alloc) * r_bd[t, :]
+        mat_cap[t+1, :] = mat_cap[t, :] * np.exp(rendement) + apport_mensuel
+        courbe_investi[t+1] = courbe_investi[t] + apport_mensuel
         
-        # 1. Évolution des prix
-        r_eq = rendements_eq_scenarios[k, sim]
-        r_bd = rendements_bd_scenarios[k, sim]
-        
-        eq_price *= (1 + r_eq)
-        bd_price *= (1 + r_bd)
-        
-        # 2. Apport mensuel
-        apport_base_init = salaire_initial * taux_apport
-        apport_mensuel = calculer_apport_quadratique(t_annees_ecoulees, apport_base_init, nb_annees)
-        
-        if sim == 0: 
-            historique_apports_moyens[k] = apport_mensuel
+    return mat_cap, courbe_investi, hist_salaire, hist_apport
 
-        total_investi_sim += apport_mensuel
-        
-        # On achète selon la cible fixe
-        pct_eq_cible, pct_bd_cible = calculer_allocation(age_actuel)
-        
-        eq_buy = apport_mensuel * pct_eq_cible
-        bd_buy = apport_mensuel * pct_bd_cible
-        
-        eq_shares += eq_buy / eq_price
-        bd_shares += bd_buy / bd_price
-        
-        # 4. Rééquilibrage MENSUEL (Target = Profil)
-        total_val = eq_shares * eq_price + bd_shares * bd_price
-        
-        target_eq_val = total_val * pct_eq_cible
-        target_bd_val = total_val * pct_bd_cible
-        
-        eq_val = eq_shares * eq_price
-        bd_val = bd_shares * bd_price
-        
-        if eq_val > target_eq_val and eq_shares > 0:
-            vente_eq = (eq_val - target_eq_val) / eq_price
-            eq_shares -= vente_eq
-            bd_shares += (eq_val - target_eq_val) / bd_price
-        elif eq_val < target_eq_val and bd_shares > 0:
-            vente_bd = (target_eq_val - eq_val) / bd_price
-            vente_bd = min(vente_bd, bd_shares)
-            bd_shares -= vente_bd
-            eq_shares += (vente_bd * bd_price) / eq_price
-        
-        # Enregistrement
-        capital_actuel = eq_shares * eq_price + bd_shares * bd_price
-        historique_capital.append(capital_actuel)
-    
-    capital_final = eq_shares * eq_price + bd_shares * bd_price
-    
-    resultats_finaux.append({
-        'capital_final': capital_final,
-        'total_investi': total_investi_sim
-    })
-    
-    historiques_capital.append(historique_capital)
+def simuler_decumulation(capitaux_finaux, dernier_salaire, taux_livret, duree):
+    nb_sims = len(capitaux_finaux)
+    taux_histo = np.zeros((duree, nb_sims))
+    cap_courant = capitaux_finaux.copy()
+    for i in range(duree):
+        restant = duree - i
+        pension_mensuelle = cap_courant / (12 * restant)
+        taux_histo[i, :] = pension_mensuelle / dernier_salaire
+        cap_courant = (cap_courant - pension_mensuelle*12) * (1 + taux_livret)
+        cap_courant = np.maximum(cap_courant, 0)
+    return taux_histo
 
-''' ========== ANALYSE DES RÉSULTATS ========== '''
+def analyse_drawdown(dates, courbe_cap):
+    vals = np.array(courbe_cap)
+    max_cum = np.maximum.accumulate(vals)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        dds = (vals - max_cum) / max_cum
+    dds = np.nan_to_num(dds)
+    idx_worst = np.argmin(dds)
+    return dds[idx_worst], dates[idx_worst], dds
 
-capitaux_finaux = [r['capital_final'] for r in resultats_finaux]
-total_investi_moyen = np.mean([r['total_investi'] for r in resultats_finaux])
+def calcul_kpi_complets(capitaux_finaux, total_investi, mat_cap_historique):
+    # Shortfall Probability
+    nb_pertes = np.sum(capitaux_finaux < total_investi)
+    proba_shortfall = nb_pertes / len(capitaux_finaux)
+    
+    # VaR 95 (Nominale)
+    var_95 = np.percentile(capitaux_finaux, 5)
+    
+    # Sortino Ratio
+    idx_med = np.argsort(capitaux_finaux)[len(capitaux_finaux)//2]
+    trajectoire_med = mat_cap_historique[:, idx_med]
+    rendements = np.diff(trajectoire_med) / trajectoire_med[:-1]
+    rendements_neg = rendements[rendements < 0]
+    downside = np.std(rendements_neg) * np.sqrt(12)
+    sortino = (np.mean(rendements)*12) / downside if downside > 0 else 0
 
-capital_median = np.median(capitaux_finaux)
-capital_moyen = np.mean(capitaux_finaux)
-capital_p10 = np.percentile(capitaux_finaux, 10)
-capital_p90 = np.percentile(capitaux_finaux, 90)
+    # Max Underwater Duration (Années)
+    plus_haut = np.maximum.accumulate(trajectoire_med)
+    is_underwater = trajectoire_med < plus_haut
+    duree_max, compteur = 0, 0
+    for s in is_underwater:
+        if s: compteur += 1
+        else:
+            duree_max = max(duree_max, compteur); compteur = 0
+    max_underwater = max(duree_max, compteur) / 12.0
+    
+    # Dispersion P95 - P5
+    p95 = np.percentile(capitaux_finaux, 95)
+    p5 = np.percentile(capitaux_finaux, 5)
+    
+    return {
+        "shortfall_prob": proba_shortfall,
+        "var_95": var_95,
+        "gain_p5": var_95 - total_investi,
+        "sortino": sortino,
+        "max_underwater": max_underwater,
+        "dispersion": p95 - p5
+    }
 
-rendement_median = ((capital_median / total_investi_moyen) - 1) * 100
-rendement_moyen = ((capital_moyen / total_investi_moyen) - 1) * 100
+''' =======================================================================
+    3. VISUALISATION & PRINT
+    ======================================================================= '''
 
-print("\n" + "=" * 80)
-print(f"📊 RÉSULTATS - PROFIL {PROFIL_CHOISI} (Fixed Mix)")
-print("=" * 80)
-print(f"Simulations: {nb_simulations} | Horizon: {nb_annees} ans")
-print(f"Allocation: {FIXED_ALLOCATION_EQUITY*100:.0f}% Equity / {100-FIXED_ALLOCATION_EQUITY*100:.0f}% Bonds")
-print(f"Modèle d'apport: Quadratique")
-print(f"\n💰 Investissement:")
-print(f"  • Capital initial: {capital_initial:>15,.2f} €")
-print(f"  • Apports totaux: {total_investi_moyen - capital_initial:>15,.2f} €")
-print(f"  • Total investi: {total_investi_moyen:>15,.2f} €")
-print(f"\n🎯 Capital final:")
-print(f"  • Médian: {capital_median:>15,.2f} € (rdt: {rendement_median:>6.2f}%)")
-print(f"  • Moyen: {capital_moyen:>15,.2f} € (rdt: {rendement_moyen:>6.2f}%)")
-if nb_simulations > 1:
-    print(f"  • P10 (pessimiste): {capital_p10:>15,.2f} €")
-    print(f"  • P90 (optimiste): {capital_p90:>15,.2f} €")
-    print(f"  • Écart P90-P10: {capital_p90 - capital_p10:>15,.2f} € ({(capital_p90/capital_p10-1)*100:.1f}%)")
-print(f"\n✨ Gain médian: {capital_median - total_investi_moyen:>15,.2f} €")
-print("=" * 80)
+if __name__ == "__main__":
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    excel_path = os.path.join(script_dir, "AssumptionForSimulation.xlsx")
+    if not os.path.exists(excel_path): raise FileNotFoundError("Excel manquant.")
+    
+    df_BS = pd.read_excel(excel_path)
+    mapping = {'US Government Bond': 'US Government Bond USD Unhedged', 'USD Corporate Bond': 'USD Corporate Bond - USD Unhedged', 
+               'Global Equity': 'Global Equity USD Hedged', 'US Equity': 'US Equity USD Unhedged'}
+    df_BS['Asset Name'] = df_BS['Asset Name'].replace(mapping)
+    
+    profil = PROFILS[PROFIL_CHOISI]
+    mu_e, s_e, _ = get_params(profil["equity"], df_BS)
+    mu_b, s_b, corr = get_params(profil["bond"], df_BS)
+    
+    # --- Calculs ---
+    DATE_PIVOT = "2025-01-01" 
+    dates = pd.date_range(start=DATE_DEBUT_T0, periods=NB_PERIODES_TOTAL, freq='ME')
+    
+    # 1. Génération Rendements
+    r_eq, r_bd = generer_rendements_simules(mu_e, s_e, mu_b, s_b, corr, dates, DATE_PIVOT, NB_SIMULATIONS)
+    
+    # 2. Injection Crise (Optionnel)
+    if SIMULER_KRACH and pd.Timestamp(DATE_CRISE) > pd.Timestamp(DATE_PIVOT):
+        r_eq, r_bd = injecter_crise_complexe(r_eq, r_bd, dates, DATE_CRISE, PARAMS_CRISE)
+    
+    # 3. Accumulation
+    mat_cap, courbe_investi, hist_sal, hist_app = simuler_accumulation_complete(
+        CAPITAL_INITIAL, r_eq, r_bd, profil["fixed_allocation"], dates)
+    
+    # --- Indices ---
+    idx_sorted = np.argsort(mat_cap[-1, :])
+    idx_p5 = idx_sorted[int(NB_SIMULATIONS*0.05)]
+    idx_med = idx_sorted[int(NB_SIMULATIONS*0.50)]
+    idx_p95 = idx_sorted[int(NB_SIMULATIONS*0.95)]
+    
+    last_salary = hist_sal[-1]
+    taux_remp = simuler_decumulation(mat_cap[-1, :], last_salary, TAUX_LIVRET_A, DUREE_RETRAITE)
+    tri_median = calculer_tri_annualise(CAPITAL_INITIAL, hist_app, mat_cap[-1, idx_med])
 
-''' ========== VISUALISATIONS ========== '''
+    # =========================================================================
+    # VISUALISATION GRAPHIQUE
+    # =========================================================================
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(18, 11))
+    fig.suptitle(f"ANALYSE ALM - PROFIL {PROFIL_CHOISI}", fontsize=16, fontweight='bold', y=0.96)
+    dates_plot = [pd.Timestamp(DATE_DEBUT_T0)] + list(dates)
 
-# Création des dates pour l'axe des abscisses
-# 1. Dates pour les flux mensuels (Apports, Rendements) - taille = nb_periodes_total
-dates_monthly = pd.date_range(start=t0, periods=nb_periodes_total, freq='M')
+    # AX1 : Flux
+    ax1.plot(dates, hist_sal, color='#1f77b4', label='Salaire Net')
+    ax1_bis = ax1.twinx()
+    ax1_bis.plot(dates, hist_app, color='#2ca02c', linestyle='--', label='Épargne')
+    ax1.set_title("1. Flux Financiers (Salaire & Épargne)", fontsize=11)
+    ax1.legend(loc='upper left'); ax1_bis.legend(loc='upper right')
+    
+    # AX2 : Capital Nominal
+    ax2.plot(dates_plot, courbe_investi, color='#d62728', label='Versements Cumulés (Cash)')
+    ax2.plot(dates_plot, mat_cap[:, idx_p95], color='#2ca02c', linewidth=1, label='P95 (Optimiste)')
+    ax2.plot(dates_plot, mat_cap[:, idx_med], color='black', linewidth=2, label='Médiane (P50)')
+    ax2.plot(dates_plot, mat_cap[:, idx_p5], color='gray', linewidth=1, label='P5 (Pessimiste)')
+    ax2.fill_between(dates_plot, mat_cap[:, idx_p5], mat_cap[:, idx_p95], color='gray', alpha=0.1)
+    ax2.set_title(f"2. Projection Capital (Nominal) - TRI {tri_median:.2f}%", fontsize=11)
+    ax2.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, p: format(int(x), ',').replace(',', ' ')))
+    ax2.legend(loc='upper left')
 
-# 2. Dates pour le capital (inclut la date initiale t0) - taille = nb_periodes_total + 1
-dates_capital = [pd.to_datetime(t0)] + list(dates_monthly)
+    # AX3 : Remplacement
+    ax3.plot(np.arange(1, 21), taux_remp[:, idx_p95]*100, label='P95')
+    ax3.plot(np.arange(1, 21), taux_remp[:, idx_med]*100, color='black', label='P50')
+    ax3.plot(np.arange(1, 21), taux_remp[:, idx_p5]*100, label='P5')
+    ax3.set_title("3. Taux de Remplacement (%)", fontsize=11)
+    ax3.legend()
 
-if nb_simulations == 1:
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    # AX4 : RENDEMENTS ANNUELS (CORRIGÉ)
+    df_perf = pd.DataFrame(mat_cap)
+    perf_annuelle = df_perf.pct_change(12).iloc[12::12] * 100
+    annees_simu = np.arange(1, len(perf_annuelle) + 1)
     
-    # Calcul manuel du cumul pour le graph single simulation
-    cumul_investi = [capital_initial]
-    curr_invest = capital_initial
-    for m in range(len(historique_apports_moyens)):
-        curr_invest += historique_apports_moyens[m]
-        cumul_investi.append(curr_invest)
+    # Note : Backtest = même histoire pour tout le monde, donc courbes superposées au début
+    ax4.plot(annees_simu, perf_annuelle.iloc[:, idx_p95], color="#4d2ca0", alpha=0.6, label='P95 (Scénario Haut)')
+    ax4.plot(annees_simu, perf_annuelle.iloc[:, idx_med], color='black', linewidth=2, label='Médiane (Scénario Central)') # REAJOUT MEDIANE
+    ax4.plot(annees_simu, perf_annuelle.iloc[:, idx_p5], color='#d62728', alpha=0.6, label='P5 (Scénario Bas)')
+    
+    ax4.axhline(0, color='black', linewidth=1)
+    # Zone grisée pour distinguer passé (simulé) et futur
+    idx_pivot_annee = int(pd.Timestamp(DATE_PIVOT).year - pd.Timestamp(DATE_DEBUT_T0).year)
+    ax4.axvline(idx_pivot_annee, color='gray', linestyle='--', alpha=0.5)
+    ax4.text(idx_pivot_annee - 2, 20, "BACKTEST SIMULÉ", fontsize=8, color='gray')
+    ax4.text(idx_pivot_annee + 1, 20, "PROJECTIONS", fontsize=8, color='gray')
+    
+    ax4.set_title("4. Rendements Annuels (Backtest & Projection)", fontsize=11)
+    ax4.set_ylabel("Rendement (%)")
+    ax4.legend(loc='lower center', ncol=3)
+    
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.show()
 
-    # Graph 1 : Capital vs Date
-    axes[0, 0].plot(dates_capital, historiques_capital[0], color='#2E86AB', linewidth=2, label='Capital valorisé')
-    axes[0, 0].plot(dates_capital, cumul_investi, color='#A23B72', linewidth=2, linestyle='--', label='Capital investi')
-    axes[0, 0].set_title(f'Evolution du capital - {PROFIL_CHOISI}', fontsize=14, fontweight='bold')
-    axes[0, 0].set_xlabel('Date', fontsize=11)
-    axes[0, 0].set_ylabel('Capital (€)', fontsize=11)
-    axes[0, 0].legend()
-    axes[0, 0].grid(True, alpha=0.3)
+    # =========================================================================
+    # TERMINAL REPORT (CLEAN & KPI ORIENTED)
+    # =========================================================================
     
-    # Graph 2 : Apports vs Date
-    axes[0, 1].plot(dates_monthly, historique_apports_moyens, linewidth=2.5, color='#D4AF37', label='Apport mensuel')
-    axes[0, 1].set_title(f'Profil des Apports (Modèle Quadratique)', fontsize=14, fontweight='bold')
-    axes[0, 1].set_xlabel('Date', fontsize=11)
-    axes[0, 1].set_ylabel('Apport Mensuel (€)', fontsize=11)
-    axes[0, 1].legend()
-    axes[0, 1].grid(True, alpha=0.3)
+    total_verse = courbe_investi[-1]
+    kpis = calcul_kpi_complets(mat_cap[-1, :], total_verse, mat_cap)
     
-    # Graph 3 : Rendements vs Date
-    axes[1, 0].plot(dates_monthly, rendements_eq_scenarios[:, 0] * 100, alpha=0.7, linewidth=1, label='Equity', color='#2E86AB')
-    axes[1, 0].plot(dates_monthly, rendements_bd_scenarios[:, 0] * 100, alpha=0.7, linewidth=1, label='Bonds', color='#A23B72')
-    axes[1, 0].axhline(y=0, color='red', linestyle='--', alpha=0.5)
-    axes[1, 0].set_title('Rendements mensuels historiques', fontsize=14, fontweight='bold')
-    axes[1, 0].set_xlabel('Date', fontsize=11)
-    axes[1, 0].set_ylabel('Rendement (%)', fontsize=11)
-    axes[1, 0].legend()
-    axes[1, 0].grid(True, alpha=0.3)
-    
-    axes[1, 1].axis('off')
-    stats_text = f"""
-    PROFIL {PROFIL_CHOISI}
-    {profil['description']}
-    
-    Capital final: {capital_median:,.0f} €
-    Total investi: {total_investi_moyen:,.0f} €
-    Gain: {capital_median - total_investi_moyen:,.0f} €
-    Rendement: {rendement_median:.2f}%
-    
-    Actifs:
-    • {EQUITIES.get(Equity, Equity)[:20]}
-    • {BONDS_SAFE.get(Bond, BONDS_RISKY.get(Bond, Bond))[:20]}
-    """
-    axes[1, 1].text(0.1, 0.5, stats_text, fontsize=11, verticalalignment='center', 
-                    family='monospace', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+    # Correction Inflation
+    coeff_inflation = 1 / ((1 + INFLATION_ANNUELLE) ** NB_ANNEES_ACCUMULATION)
+    capital_p5_reel = kpis['var_95'] * coeff_inflation
+    gain_p5_reel = capital_p5_reel - total_verse
 
-else:
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    print("\n")
+    print("╔══════════════════════════════════════════════════════════════════════╗")
+    print(f"║   RAPPORT ALM SYNTHÉTIQUE  |  PROFIL : {PROFIL_CHOISI:<23}   ║")
+    print("╠══════════════════════════════════════════════════════════════════════╣")
+    print("║ 1. FLUX & TRI                                                        ║")
+    print(f"║    > Capital Total Investi (Cash) :   {total_verse:15,.0f} €          ║")
+    print(f"║    > Capital Final Médian (P50)   :   {mat_cap[-1, idx_med]:15,.0f} €          ║")
+    print(f"║    > TRI Médian                   :   {tri_median:14.2f} %           ║")
+    print("╠══════════════════════════════════════════════════════════════════════╣")
+    print("║ 2. RISQUE & DOWNSIDE (Les KPIs manquants)                            ║")
+    print(f"║    > SHORTFALL RISK (Proba Perte) :   {kpis['shortfall_prob']*100:14.2f} %           ║")
+    print(f"║    > Worst Case (P5 Nominal)      :   {kpis['var_95']:15,.0f} €          ║")
+    print(f"║    > P&L en cas de Crise (P5)     :   {kpis['gain_p5']:+15,.0f} €          ║")
+    print(f"║    > Max Underwater (Durée)       :   {kpis['max_underwater']:11.1f} années        ║")
+    print(f"║    > Sortino Ratio                :   {kpis['sortino']:14.2f}             ║")
+    print("╠══════════════════════════════════════════════════════════════════════╣")
+    print("║ 3. RÉALITÉ ÉCONOMIQUE (Inflation incluse)                            ║")
+    print(f"║    > Capital P5 RÉEL (Net Infla)  :   {capital_p5_reel:15,.0f} €          ║")
+    print(f"║    > P&L RÉEL (Pouvoir d'Achat)   :   {gain_p5_reel:+15,.0f} €          ║")
+    print("╚══════════════════════════════════════════════════════════════════════╝")
     
-    # Histogramme (Pas de date ici)
-    axes[0, 0].hist(capitaux_finaux, bins=50, color='#2E86AB', alpha=0.7, edgecolor='black')
-    axes[0, 0].axvline(capital_median, color='red', linestyle='--', linewidth=2, label=f'Médiane: {capital_median:,.0f} €')
-    axes[0, 0].axvline(capital_moyen, color='green', linestyle='--', linewidth=2, label=f'Moyenne: {capital_moyen:,.0f} €')
-    axes[0, 0].set_title(f'Distribution - Profil {PROFIL_CHOISI}', fontsize=14, fontweight='bold')
-    axes[0, 0].set_xlabel('Capital (€)', fontsize=11)
-    axes[0, 0].set_ylabel('Fréquence', fontsize=11)
-    axes[0, 0].legend()
-    axes[0, 0].grid(True, alpha=0.3)
-    
-    percentiles = [10, 25, 50, 75, 90]
-    evolutions_percentiles = {p: [] for p in percentiles}
-    
-    for k in range(len(historiques_capital[0])):
-        valeurs_k = [hist[k] for hist in historiques_capital]
-        for p in percentiles:
-            evolutions_percentiles[p].append(np.percentile(valeurs_k, p))
-    
-    # Graph 2 : Percentiles vs Date
-    axes[0, 1].fill_between(dates_capital, evolutions_percentiles[10], evolutions_percentiles[90], 
-                             alpha=0.2, color='#2E86AB', label='P10-P90')
-    axes[0, 1].fill_between(dates_capital, evolutions_percentiles[25], evolutions_percentiles[75], 
-                             alpha=0.3, color='#2E86AB', label='P25-P75')
-    axes[0, 1].plot(dates_capital, evolutions_percentiles[50], color='#A23B72', linewidth=2.5, label='Médiane')
-    axes[0, 1].set_title('Evolution du capital (percentiles)', fontsize=14, fontweight='bold')
-    axes[0, 1].set_xlabel('Date', fontsize=11)
-    axes[0, 1].set_ylabel('Capital (€)', fontsize=11)
-    axes[0, 1].legend()
-    axes[0, 1].grid(True, alpha=0.3)
-    
-    # Graph 3 : Apports vs Date
-    axes[1, 0].plot(dates_monthly, historique_apports_moyens, linewidth=2.5, color='#D4AF37', label='Apport mensuel')
-    axes[1, 0].set_title(f'Profil des Apports (Modèle Quadratique)', fontsize=14, fontweight='bold')
-    axes[1, 0].set_xlabel('Date', fontsize=11)
-    axes[1, 0].set_ylabel('Apport Mensuel (€)', fontsize=11)
-    axes[1, 0].legend()
-    axes[1, 0].grid(True, alpha=0.3)
-    
-    rendements_mensuels_eq = np.mean(rendements_eq_scenarios, axis=1) * 100
-    rendements_mensuels_bd = np.mean(rendements_bd_scenarios, axis=1) * 100
-    
-    # Graph 4 : Rendements vs Date
-    axes[1, 1].plot(dates_monthly, rendements_mensuels_eq, alpha=0.7, linewidth=1, label='Equity', color='#2E86AB')
-    axes[1, 1].plot(dates_monthly, rendements_mensuels_bd, alpha=0.7, linewidth=1, label='Bonds', color='#A23B72')
-    axes[1, 1].axhline(y=0, color='red', linestyle='--', alpha=0.5)
-    axes[1, 1].set_title('Rendements mensuels moyens', fontsize=14, fontweight='bold')
-    axes[1, 1].set_xlabel('Date', fontsize=11)
-    axes[1, 1].set_ylabel('Rendement (%)', fontsize=11)
-    axes[1, 1].legend()
-    axes[1, 1].grid(True, alpha=0.3)
-
-plt.tight_layout()
-plt.show()
+    if gain_p5_reel < 0:
+        print(f"\n>>> ALERTE : Le modèle détruit {abs(gain_p5_reel):,.0f} € de richesse réelle en cas de scénario adverse (P5).")

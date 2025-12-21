@@ -1,48 +1,82 @@
-# Fixed Mix Strategy - Lifecycle Backtesting Engine
+# ALM Simulation Engine - Fixed Mix Strategy
 
-## 1. What is the Fixed Mix Strategy?
-The **Fixed Mix** (or Constant Mix) is a dynamic asset allocation strategy that maintains a constant ratio between asset classes (e.g., 60% Equities / 40% Bonds) throughout the investment horizon.
+## Overview
+This project implements a stochastic simulation engine (Monte Carlo) designed for Asset Liability Management (ALM) and retirement planning analysis. The tool projects wealth evolution based on a "Fixed Mix" allocation strategy, integrating dynamic cash flows (salary curve, elastic savings rate) and complex market scenarios.
 
-Unlike a "Buy and Hold" strategy where allocation drifts with market movements, the Fixed Mix strategy requires **periodic rebalancing** (monthly in this simulation).
-* **Mechanism:** When equities rise, the portfolio sells the surplus to buy bonds (selling high). When equities fall, the portfolio sells bonds to buy equities (buying low).
-* **Goal:** To maintain a constant risk exposure and capitalize on volatility harvesting (mean reversion).
+The script generates a comprehensive visual dashboard and a terminal-based report quantifying Tail Risk and risk-adjusted performance metrics.
 
-## 2. Investor Profiles
-The program supports 5 distinct risk profiles, defining the target fixed allocation ($w_{equity}$ / $w_{bond}$) and the specific assets used:
+## Key Features
 
-* **PRUDENT:** 20% Equity / 80% Bonds (Gov Bonds)
-* **MODERE:** 40% Equity / 60% Bonds (Inflation Linked)
-* **EQUILIBRE:** 60% Equity / 40% Bonds (Corporate Bonds)
-* **DYNAMIQUE:** 80% Equity / 20% Bonds (High Yield)
-* **AGRESSIF:** 95% Equity / 5% Bonds (High Yield)
+### 1. Stochastic Modeling
+* **Monte Carlo Simulation:** Generates 500 market trajectories for Equity and Bond assets using correlated Geometric Brownian Motion.
+* **Asset Correlation:** Accounts for the correlation matrix between asset classes defined in the input configuration.
 
-## 3. Data & Backtesting Period
-The engine performs a historical backtest based on real market data provided by **HSBC**.
-* **Historical Range:** December 2001 – 2025.
-* **Assets Covered:** Global Equities (hedged/unhedged), US Treasuries, Corporate Bonds, and High Yield Bonds.
+### 2. Crisis & Stress Testing
+* **Deterministic Crisis Injection:** Capability to inject specific market shocks (crashes) at defined dates.
+* **Parametric Control:** Customizable drawdown depth, duration, and volatility expansion factors during crisis periods.
 
-The simulation reconstructs the path of a portfolio over this specific historical timeframe to assess how the strategy would have performed in real market conditions.
+### 3. Cash Flow Logic
+* **Dynamic Contributions:** Implements a logistic salary growth model with saturation levels.
+* **Elastic Savings:** Savings rate adjusts based on income progression and maturity thresholds.
 
-## 4. Modeling Monthly Contributions (Quadratic Lifecycle)
-To ensure the simulation reflects realistic investor behavior, the program implements a **Quadratic Lifecycle Contribution Model** (based on *Bruder et al., 2025*).
+### 4. Financial KPIs
+* **Risk Metrics:** Shortfall Probability, Value at Risk (VaR 95), and Maximum Underwater Duration.
+* **Performance:** Median IRR (Internal Rate of Return), Sortino Ratio.
+* **Real Terms:** Adjusts final capital and P&L for inflation to reflect real purchasing power.
 
-Instead of assuming constant savings, the monthly contribution $C(t)$ follows a parabolic curve defined on the active lifecycle $[StartAge, EndAge]$:
-* **Ramp-up:** Contributions increase during the early career.
-* **Peak:** Maximum saving capacity is reached at **age 53**.
-* **Decline:** Contributions decrease as the investor approaches retirement.
+## Technical Requirements
 
-$$C(t) = a(t - t_{peak})^2 + C_{max}$$
+### Prerequisites
+* Python 3.8+
+* Input Data: `AssumptionForSimulation.xlsx` file containing:
+    * *Asset Name*
+    * *Expected Return*
+    * *Volatility*
+    * *Correlation*
 
-This model allows us to test the strategy's sensitivity to the timing of cash flows (sequence of returns risk).
+### Dependencies
+Install the required libraries using pip:
 
-## 5. Performance Calculation Methodology
-The script computes the portfolio's evolution month by month considering:
-1.  **Asset Returns:** Actual historical monthly variations.
-2.  **Dynamic Inflows:** Monthly injections based on the quadratic model.
-3.  **Rebalancing Costs/Logic:** Adjusting weights back to the target profile.
+    pip install pandas numpy matplotlib scipy openpyxl
 
-### Computed Metrics
-The output focuses on:
-* **Capital Evolution:** Tracking the portfolio value vs. total capital invested over time.
-* **Total Invested:** The sum of all monthly contributions.
-* **Final Valuation:** The portfolio value at the end of the historical period.
+## Configuration
+
+Configuration is managed directly within the `main.py` header (Section 1. CONFIGURATION).
+
+### User Parameters
+| Variable | Description |
+| :--- | :--- |
+| `PROFIL_CHOISI` | Asset Allocation Profile (e.g., EQUILIBRE, DYNAMIQUE). |
+| `NB_ANNEES_ACCUMULATION` | Simulation time horizon (e.g., 40 years). |
+| `DATE_DEBUT_T0` | Start date for the time series. |
+| `SALAIRE_INITIAL` | Initial monthly net income. |
+| `CAPITAL_INITIAL` | Initial lump sum investment. |
+
+### Crisis Scenarios
+To stress-test the portfolio, adjust the following parameters:
+* `SIMULER_KRACH`: Boolean flag to enable/disable the module.
+* `DATE_CRISE`: Trigger date for the market shock.
+* `PARAMS_CRISE`: Dictionary defining the equity drop (`drop_eq`) and recovery dynamics.
+
+## Outputs
+
+### 1. Graphical Dashboard
+The script produces a matplotlib window with four analysis panels:
+1.  **Financial Flows:** Visualization of Income vs. Savings contribution over time.
+2.  **Capital Projection:** Cone of uncertainty showing P95 (Optimistic), Median, and P5 (Pessimistic) trajectories against Nominal Cash invested.
+3.  **Replacement Rate:** Decumulation phase projection (Pension/Last Salary ratio).
+4.  **Annual Returns:** Distribution of annual returns distinguishing between historical backtests and future projections.
+
+### 2. Terminal Report
+A professional summary is printed to the console, focusing on decision-critical metrics:
+* **Median IRR:** Annualized Internal Rate of Return.
+* **Shortfall Risk:** Probability of ending with less than the total capital invested.
+* **Real P5 P&L:** Net-of-inflation performance in the worst 5% of scenarios.
+
+## Methodological Note
+This model relies on Gaussian assumptions for random return generation. While the "Crisis" module allows for the injection of fat-tailed events, past performance or simulated results do not guarantee future outcomes. Users must ensure the consistency of the expected return and volatility assumptions provided in the source Excel file.
+
+---
+
+### Disclaimer
+*This software is provided for informational and educational purposes only. It does not constitute financial investment advice. The author assumes no responsibility for the accuracy of the results or decisions made based on this tool.*

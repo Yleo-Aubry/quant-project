@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kalman_arb"
+version = "0.1.0"
+authors = [
+  { name="Quant Researcher", email="quant@example.com" },
+]
+description = "Event-driven backtester with Kalman Filter for Statistical Arbitrage"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "pandas",
+    "yfinance",
+    "matplotlib"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

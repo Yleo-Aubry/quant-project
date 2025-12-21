@@ -78,7 +78,7 @@ Kalman-StatArb-Project/
 ├── pyproject.toml                  # CONFIGURATION. Dependency management, build system, and package metadata.
 └── fix_config.py                   # UTILITY. Script to enforce correct pyproject.toml creation on Windows environments.
 ```
-## 6. Strategy Configuration & Hyperparameter Sensitivity
+## 4. Strategy Configuration & Hyperparameter Sensitivity
 
 The robustness of the trading algorithm depends heavily on the calibration of the State-Space Model parameters. These values control the trade-off between the filter's reactivity to market shocks and its stability against noise.
 
@@ -98,7 +98,7 @@ The current settings ($\delta=10^{-5}, R=0.01$) are optimized for **Inter-Day tr
 
 ---
 
-## 7. Legal Disclaimer & Risk Disclosure
+## 5. Legal Disclaimer & Risk Disclosure
 
 **IMPORTANT NOTICE: PLEASE READ CAREFULLY.**
 

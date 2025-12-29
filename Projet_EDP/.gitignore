@@ -1,0 +1,14 @@
+# Ignorer le dossier de compilation
+build/
+bin/
+
+# Ignorer les fichiers temporaires VSCode
+.vscode/
+
+# Ignorer les exécutables (au cas où ils trainent ailleurs)
+*.exe
+*.o
+
+# Ignorer les fichiers systèmes
+.DS_Store
+Thumbs.db
